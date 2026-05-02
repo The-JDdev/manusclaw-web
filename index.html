@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ManusClaw Web — Autonomous AI Agent UI</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          brand: { DEFAULT: '#58a6ff', dark: '#1f6feb' },
+          surface: { DEFAULT: '#161b22', raised: '#21262d', border: '#30363d' },
+        },
+        fontFamily: { mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'monospace'] },
+      }
+    }
+  }
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9; font-family: 'JetBrains Mono', monospace; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #161b22; }
+  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .fade-in { animation: fadeIn 0.3s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+  .tool-bar { transition: width 0.4s ease; }
+  #terminal-output { white-space: pre-wrap; }
+  .step-card { border-left: 3px solid #58a6ff; }
+  .step-card.error { border-left-color: #f85149; }
+  .step-card.done { border-left-color: #3fb950; }
+</style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+<!-- ─── Top Bar ─────────────────────────────────────────────────────────── -->
+<header class="flex items-center justify-between px-4 py-2 bg-surface border-b border-surface-border flex-shrink-0">
+  <div class="flex items-center gap-3">
+    <span class="text-brand text-lg font-semibold tracking-wide">🦾 ManusClaw</span>
+    <span class="text-xs text-gray-500">v3.0 — by The-JDdev (SHS Shobuj)</span>
+    <span id="conn-badge" class="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-300">● Disconnected</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <label class="text-xs text-gray-400">Server:</label>
+    <input id="server-url" type="text" value="ws://localhost:8765"
+      class="bg-surface-raised border border-surface-border rounded px-2 py-1 text-xs w-56 text-gray-300 focus:outline-none focus:border-brand" />
+    <button onclick="connect()" class="text-xs px-3 py-1 bg-brand text-black rounded font-semibold hover:bg-brand-dark transition">Connect</button>
+    <div class="flex items-center gap-2 ml-4">
+      <label class="text-xs text-gray-400">Mode:</label>
+      <select id="agent-mode" class="bg-surface-raised border border-surface-border rounded px-2 py-1 text-xs text-gray-300 focus:outline-none">
+        <option value="build">🔥 Build</option>
+        <option value="plan">📋 Plan</option>
+      </select>
+    </div>
+    <div class="flex items-center gap-2 ml-2">
+      <label class="text-xs text-gray-400">Pipeline:</label>
+      <select id="pipeline-mode" class="bg-surface-raised border border-surface-border rounded px-2 py-1 text-xs text-gray-300 focus:outline-none">
+        <option value="single">Single Agent</option>
+        <option value="multi">Multi-Agent (PM→Arch→Eng→QA)</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<!-- ─── Main Layout ─────────────────────────────────────────────────────── -->
+<div class="flex flex-1 overflow-hidden">
+
+  <!-- Left: File tree + Sessions -->
+  <aside class="w-56 flex-shrink-0 bg-surface border-r border-surface-border flex flex-col overflow-hidden">
+    <div class="px-3 py-2 text-xs text-gray-500 font-semibold uppercase tracking-wider border-b border-surface-border">
+      Sessions
+    </div>
+    <div id="session-list" class="flex-1 overflow-y-auto text-xs text-gray-400 p-2 space-y-1">
+      <div class="text-gray-600 italic">Connect to load sessions</div>
+    </div>
+    <div class="border-t border-surface-border px-3 py-2">
+      <button onclick="loadSessions()" class="text-xs text-brand hover:underline">↻ Refresh</button>
+    </div>
+  </aside>
+
+  <!-- Center: Chat + Terminal -->
+  <main class="flex-1 flex flex-col overflow-hidden">
+
+    <!-- Step / output stream -->
+    <div id="output-pane" class="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-sm">
+      <div class="text-gray-600 text-center mt-8">
+        Connect to a ManusClaw server, then enter a prompt below.<br/>
+        <span class="text-xs">Supports ws:// local and wss:// remote (Vercel, GitHub Pages → Termux)</span>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="border-t border-surface-border p-3 flex gap-2 flex-shrink-0 bg-surface">
+      <textarea id="prompt-input" rows="2"
+        placeholder="Enter your task... (Shift+Enter = newline, Enter = send)"
+        class="flex-1 bg-surface-raised border border-surface-border rounded px-3 py-2 text-sm text-gray-200 resize-none focus:outline-none focus:border-brand placeholder-gray-600"
+        onkeydown="handleKey(event)"></textarea>
+      <div class="flex flex-col gap-1">
+        <button id="send-btn" onclick="sendPrompt()"
+          class="px-4 py-2 bg-brand text-black rounded font-semibold text-sm hover:bg-brand-dark transition disabled:opacity-40">
+          ▶ Run
+        </button>
+        <button onclick="clearOutput()"
+          class="px-4 py-1 bg-surface-raised border border-surface-border text-gray-400 rounded text-xs hover:border-brand transition">
+          Clear
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Right: Tool call log -->
+  <aside class="w-72 flex-shrink-0 bg-surface border-l border-surface-border flex flex-col overflow-hidden">
+    <div class="px-3 py-2 text-xs text-gray-500 font-semibold uppercase tracking-wider border-b border-surface-border flex justify-between">
+      <span>Tool Calls</span>
+      <span id="step-counter" class="text-gray-600">—</span>
+    </div>
+    <div id="tool-log" class="flex-1 overflow-y-auto p-2 space-y-1.5 text-xs font-mono">
+      <div class="text-gray-600 italic text-center mt-4">Tool calls appear here</div>
+    </div>
+    <!-- ToolSelector scores -->
+    <div class="border-t border-surface-border px-3 py-2">
+      <div class="text-xs text-gray-500 mb-1 font-semibold">Tool Intelligence</div>
+      <div id="tool-scores" class="space-y-1"></div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- ─── Scripts ────────────────────────────────────────────────────────── -->
+<script>
+/* ── State ──────────────────────────────────────────────────────────── */
+let ws = null;
+let sessionId = null;
+let stepCount = 0;
+let running = false;
+const REST_BASE = () => document.getElementById('server-url').value.replace(/^ws/, 'http').replace(/\/ws.*$/, '');
+
+/* ── WebSocket ──────────────────────────────────────────────────────── */
+function connect() {
+  const url = document.getElementById('server-url').value.trim();
+  if (ws) { ws.close(); ws = null; }
+  sessionId = 'mc-' + Math.random().toString(36).slice(2, 10);
+
+  const wsUrl = url.endsWith('/') ? url + 'ws/' + sessionId : url + '/ws/' + sessionId;
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    setBadge(true);
+    log('system', `Connected to ${url}`);
+    loadSessions();
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleServerMessage(msg);
+  };
+
+  ws.onerror = () => log('error', 'WebSocket error — check server URL and CORS');
+  ws.onclose = () => { setBadge(false); log('system', 'Disconnected'); };
+}
+
+function handleServerMessage(msg) {
+  switch (msg.type) {
+    case 'connected':
+      log('system', msg.message);
+      break;
+    case 'agent_start':
+      stepCount = 0;
+      running = true;
+      setSendBtn(false);
+      log('plan', `▶ Agent started\n  Prompt: ${msg.prompt}`);
+      break;
+    case 'step_start':
+      stepCount = msg.step;
+      document.getElementById('step-counter').textContent = `Step ${msg.step}`;
+      addToolCard(msg.step, 'thinking', '...', null);
+      break;
+    case 'step_output':
+      updateToolCard(msg.step, msg.content);
+      logOutput(msg.step, msg.content);
+      break;
+    case 'agent_done':
+      running = false;
+      setSendBtn(true);
+      log('done', `■ Agent finished (${msg.state})\n\n${msg.output}`);
+      loadSessions();
+      break;
+    case 'agent_error':
+      running = false;
+      setSendBtn(true);
+      log('error', `✗ Error: ${msg.error}`);
+      break;
+    case 'pong':
+      break;
+    default:
+      log('system', JSON.stringify(msg));
+  }
+}
+
+/* ── Send prompt ──────────────────────────────────────────────────── */
+function sendPrompt() {
+  const prompt = document.getElementById('prompt-input').value.trim();
+  if (!prompt) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) { connect(); setTimeout(sendPrompt, 800); return; }
+  if (running) return;
+
+  clearOutput();
+  const mode = document.getElementById('agent-mode').value;
+  const pipeline = document.getElementById('pipeline-mode').value;
+
+  log('user', `You: ${prompt}`);
+
+  if (pipeline === 'multi') {
+    // Use REST for multi-agent
+    fetch(REST_BASE() + '/multi-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: prompt, mode }),
+    })
+    .then(r => r.json())
+    .then(d => { log('done', d.result || JSON.stringify(d)); })
+    .catch(e => log('error', e.toString()));
+    log('plan', '▶ Multi-agent pipeline started (PM → Architect → Engineer → QA)...');
+  } else {
+    ws.send(JSON.stringify({ prompt, mode }));
+  }
+
+  document.getElementById('prompt-input').value = '';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+}
+
+/* ── Output pane ─────────────────────────────────────────────────── */
+function log(type, text) {
+  const pane = document.getElementById('output-pane');
+  const div = document.createElement('div');
+  div.className = 'fade-in p-2 rounded text-sm ' + {
+    system: 'text-gray-500 italic',
+    user:   'text-blue-300',
+    plan:   'text-yellow-300',
+    done:   'text-green-300',
+    error:  'text-red-400',
+    output: 'text-gray-200 bg-surface-raised',
+  }[type] || 'text-gray-200';
+  div.textContent = text;
+  pane.appendChild(div);
+  pane.scrollTop = pane.scrollHeight;
+}
+
+function logOutput(step, content) {
+  log('output', `[Step ${step}] ${content.slice(0, 500)}`);
+}
+
+function clearOutput() {
+  document.getElementById('output-pane').innerHTML = '';
+  document.getElementById('tool-log').innerHTML = '';
+  document.getElementById('tool-scores').innerHTML = '';
+  document.getElementById('step-counter').textContent = '—';
+  stepCount = 0;
+}
+
+/* ── Tool call cards (right pane) ────────────────────────────────── */
+const toolCards = {};
+function addToolCard(step, status, text, toolName) {
+  const log = document.getElementById('tool-log');
+  const card = document.createElement('div');
+  card.id = `tc-${step}`;
+  card.className = 'step-card fade-in p-2 bg-surface-raised rounded text-xs leading-relaxed';
+  card.innerHTML = `<span class="text-gray-500">#${step}</span> <span class="text-gray-400 blink">thinking…</span>`;
+  log.prepend(card);
+  toolCards[step] = card;
+}
+
+function updateToolCard(step, content) {
+  const card = toolCards[step];
+  if (!card) return;
+  card.className = card.className.replace('step-card', 'step-card done');
+  // Parse tool name from content
+  const toolMatch = content.match(/\[(\w+)\]/);
+  const toolName = toolMatch ? toolMatch[1] : 'output';
+  card.innerHTML = `
+    <div class="flex justify-between mb-1">
+      <span class="text-brand font-semibold">#${step} ${toolName}</span>
+      <span class="text-green-400">✓</span>
+    </div>
+    <div class="text-gray-400 truncate" title="${escHtml(content)}">${escHtml(content.slice(0, 120))}</div>
+  `;
+  updateToolScores(toolName);
+}
+
+function updateToolScores(activeToolName) {
+  const tools = ['python_execute','bash','web_search','browser_use','str_replace_editor','crawl','data_viz','ask_human','terminate'];
+  const scores = {
+    python_execute: 70, bash: 50, web_search: 60, browser_use: 40,
+    str_replace_editor: 45, crawl: 35, data_viz: 30, ask_human: 20, terminate: 10,
+  };
+  if (activeToolName && scores[activeToolName]) scores[activeToolName] = 90;
+
+  const pane = document.getElementById('tool-scores');
+  pane.innerHTML = Object.entries(scores).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([name, score]) => {
+    const w = score;
+    const active = name === activeToolName;
+    return `<div class="flex items-center gap-1 ${active?'opacity-100':'opacity-60'}">
+      <div class="w-20 text-right text-gray-500 truncate text-xs">${name.replace('_execute','').replace('_use','').replace('str_replace_','')}</div>
+      <div class="flex-1 bg-surface h-1.5 rounded overflow-hidden">
+        <div class="tool-bar h-full ${active?'bg-brand':'bg-gray-600'} rounded" style="width:${w}%"></div>
+      </div>
+      <div class="w-8 text-xs ${active?'text-brand':'text-gray-600'}">${w}%</div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Sessions ─────────────────────────────────────────────────────── */
+async function loadSessions() {
+  try {
+    const r = await fetch(REST_BASE() + '/sessions?limit=15');
+    const d = await r.json();
+    const list = document.getElementById('session-list');
+    if (!d.sessions || d.sessions.length === 0) {
+      list.innerHTML = '<div class="text-gray-600 italic text-center">No sessions yet</div>';
+      return;
+    }
+    list.innerHTML = d.sessions.map(s => {
+      const goal = (s.goal || '').slice(0, 40);
+      const state = s.state === 'finished' ? '✓' : s.state === 'error' ? '✗' : '…';
+      const stateColor = s.state === 'finished' ? 'text-green-400' : s.state === 'error' ? 'text-red-400' : 'text-yellow-400';
+      return `<div class="cursor-pointer hover:bg-surface-raised rounded p-1.5 transition" onclick="loadSession('${s.id}')">
+        <div class="flex justify-between">
+          <span class="${stateColor} text-xs">${state}</span>
+          <span class="text-gray-600 text-xs">${s.step_count || 0} steps</span>
+        </div>
+        <div class="text-gray-300 truncate text-xs mt-0.5" title="${escHtml(s.goal || '')}">${escHtml(goal)}</div>
+        <div class="text-gray-600 text-xs">${s.mode || 'build'}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('session-list').innerHTML = '<div class="text-red-400 text-xs">Failed to load</div>';
+  }
+}
+
+async function loadSession(sid) {
+  clearOutput();
+  log('system', `Loading session: ${sid}`);
+  try {
+    const [msgR, tcR] = await Promise.all([
+      fetch(REST_BASE() + `/sessions/${sid}/messages`),
+      fetch(REST_BASE() + `/sessions/${sid}/tool_calls`),
+    ]);
+    const msgs = await msgR.json();
+    const tcs  = await tcR.json();
+
+    (msgs.messages || []).forEach(m => {
+      if (m.role === 'user') log('user', `You: ${m.content}`);
+      else if (m.role === 'assistant') log('output', m.content || '');
+    });
+
+    (tcs.tool_calls || []).forEach((tc, i) => {
+      const card = document.createElement('div');
+      card.className = `step-card ${tc.success ? 'done' : 'error'} p-2 bg-surface-raised rounded text-xs leading-relaxed`;
+      card.innerHTML = `
+        <div class="flex justify-between mb-1">
+          <span class="text-brand font-semibold">#${tc.step} ${tc.tool_name}</span>
+          <span class="${tc.success ? 'text-green-400' : 'text-red-400'}">${tc.success ? '✓' : '✗'} attempt ${tc.attempt}</span>
+        </div>
+        <div class="text-gray-500 text-xs truncate">${escHtml((tc.output || tc.error || '').slice(0, 120))}</div>
+      `;
+      document.getElementById('tool-log').appendChild(card);
+    });
+  } catch (e) {
+    log('error', `Failed to load session: ${e}`);
+  }
+}
+
+/* ── Helpers ──────────────────────────────────────────────────────── */
+function setBadge(connected) {
+  const b = document.getElementById('conn-badge');
+  b.textContent = connected ? '● Connected' : '● Disconnected';
+  b.className = `text-xs px-2 py-0.5 rounded-full ${connected ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`;
+}
+function setSendBtn(enabled) {
+  const btn = document.getElementById('send-btn');
+  btn.disabled = !enabled;
+  btn.textContent = enabled ? '▶ Run' : '⟳ Running…';
+}
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Ping keepalive
+setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'ping'})); }, 25000);
+</script>
+</body>
+</html>
